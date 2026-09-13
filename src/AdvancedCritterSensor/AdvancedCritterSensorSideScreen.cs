@@ -28,6 +28,10 @@ namespace AdvancedCritterSensor
 	{
 		private static readonly FieldInfo SideScreensField = AccessTools.Field(typeof(DetailsScreen), "sideScreens");
 		private static readonly FieldInfo CurrentValueField = AccessTools.Field(typeof(ThresholdSwitchSideScreen), "currentValue");
+		private static readonly FieldInfo AboveToggleField = AccessTools.Field(typeof(ThresholdSwitchSideScreen), "aboveToggle");
+		private static readonly FieldInfo BelowToggleField = AccessTools.Field(typeof(ThresholdSwitchSideScreen), "belowToggle");
+		private static bool labelFixLogged;
+		private static bool expanderFallbackLogged;
 
 		private const int Indent = 24;
 		private const float RowHeight = 30f;
@@ -41,6 +45,8 @@ namespace AdvancedCritterSensor
 			public GameObject host;
 			public ThresholdSwitchSideScreen screen;
 			public ThresholdAdapter adapter;
+			/// <summary>Label text last applied to the above/below buttons, post LocText filtering.</summary>
+			public readonly Dictionary<LocText, string> appliedLabels = new Dictionary<LocText, string>();
 		}
 
 		private sealed class SpeciesList
@@ -122,8 +128,12 @@ namespace AdvancedCritterSensor
 
 		public void Render200ms(float dt)
 		{
-			if (target != null && built && gameObject.activeInHierarchy)
-				UpdateHeader();
+			if (target == null || !built || !gameObject.activeInHierarchy)
+				return;
+			UpdateHeader();
+			FixToggleLabels(combined);
+			FixToggleLabels(critters.threshold);
+			FixToggleLabels(eggs.threshold);
 		}
 
 		// ---- construction ----
@@ -218,12 +228,29 @@ namespace AdvancedCritterSensor
 				FlexSize = Vector2.right,
 				OnChecked = (_, __) => ToggleCounting(list),
 			}.AddOnRealize(go => list.toggle = go));
+			// PLib's "dark" component style is white (for dark backgrounds); the side screen
+			// background is light, so use the light style's dark tint. Fall back to the
+			// (rotated) play-arrow sprite if the expand/contract sprites are missing.
+			bool arrowFallback = PUITuning.Images.Expand == null || PUITuning.Images.Contract == null;
+			if (arrowFallback && !expanderFallbackLogged)
+			{
+				expanderFallbackLogged = true;
+				Debug.LogWarning("[AdvancedCritterSensor] PLib expand/contract sprites missing; using arrow fallback");
+			}
 			headerRow.AddChild(new PToggle(prefix + "Expander")
 			{
 				Size = ExpanderSize,
 				InitialState = false,
+				Color = PUITuning.Colors.ComponentLightStyle,
+				InactiveSprite = arrowFallback ? PUITuning.Images.Arrow : PUITuning.Images.Expand,
+				ActiveSprite = arrowFallback ? PUITuning.Images.Arrow : PUITuning.Images.Contract,
 				ToolTip = ModStrings.ExpanderTooltip,
-				OnStateChanged = (_, on) => SetExpanded(list, on),
+				OnStateChanged = (go, on) =>
+				{
+					if (arrowFallback)
+						go.transform.localEulerAngles = new Vector3(0f, 0f, on ? -90f : 0f);
+					SetExpanded(list, on);
+				},
 			}.AddOnRealize(go => list.expander = go));
 			rootPanel.AddChild(headerRow.AddOnRealize(go => list.headerRow = go));
 
@@ -603,6 +630,44 @@ namespace AdvancedCritterSensor
 			block.adapter.sensor = target;
 			block.screen.SetTarget(block.adapter.gameObject);
 			block.screen.Show(true);
+			FixToggleLabels(block);
+		}
+
+		/// <summary>
+		/// The vanilla screen writes "Above"/"Below" onto its two buttons in OnSpawn. In the
+		/// cloned editors that text has been observed replaced by the automation-state
+		/// sentence from the prefab, so re-apply it whenever it drifts (and log the first
+		/// occurrence with enough state to find the cause).
+		/// </summary>
+		private static void FixToggleLabels(ThresholdBlock block)
+		{
+			if (block == null || block.screen == null || !block.screen.gameObject.activeInHierarchy)
+				return;
+			FixToggleLabel(block, AboveToggleField, STRINGS.UI.UISIDESCREENS.THRESHOLD_SWITCH_SIDESCREEN.ABOVE_BUTTON);
+			FixToggleLabel(block, BelowToggleField, STRINGS.UI.UISIDESCREENS.THRESHOLD_SWITCH_SIDESCREEN.BELOW_BUTTON);
+		}
+
+		private static void FixToggleLabel(ThresholdBlock block, FieldInfo toggleField, string expected)
+		{
+			KToggle toggle = toggleField != null ? toggleField.GetValue(block.screen) as KToggle : null;
+			if (toggle == null || toggle.transform.childCount == 0)
+				return;
+			LocText label = toggle.transform.GetChild(0).GetComponent<LocText>();
+			if (label == null)
+				return;
+			string current = label.text;
+			string applied;
+			if (block.appliedLabels.TryGetValue(label, out applied) && applied == current)
+				return;
+			if (!labelFixLogged && applied != null)
+			{
+				labelFixLogged = true;
+				Debug.LogWarning("[AdvancedCritterSensor] Threshold button label drifted to '" + current + "' (key='" + label.key +
+					"', spawned=" + block.screen.isSpawned + ", active=" + block.screen.gameObject.activeInHierarchy + "); resetting to '" + expected + "'");
+			}
+			label.key = "";
+			label.SetText(expected);
+			block.appliedLabels[label] = label.text;
 		}
 
 		private static void SetButtonSelected(GameObject button, bool selected)
