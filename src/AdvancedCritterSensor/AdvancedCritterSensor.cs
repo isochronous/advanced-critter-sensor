@@ -135,9 +135,15 @@ namespace AdvancedCritterSensor
 			base.OnSpawn();
 			EnsureLists();
 			RebuildSets();
-			// Placeholder art: the vanilla critter sensor, upside down.
+			// Placeholder art: the vanilla critter sensor, upside down. The flip mirrors the
+			// art around its origin at the bottom edge of the cell, which would draw it one
+			// cell too low; the world-space offset (applied independently of the flip)
+			// moves it back up.
 			if (animController != null)
+			{
 				animController.FlipY = true;
+				animController.Offset = new Vector3(0f, Grid.CellSizeInMeters, 0f);
+			}
 			HookLogicTick(true);
 			Evaluate();
 			UpdateVisualState(force: true);
