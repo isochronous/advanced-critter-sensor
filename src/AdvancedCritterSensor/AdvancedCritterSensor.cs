@@ -135,7 +135,6 @@ namespace AdvancedCritterSensor
 			base.OnSpawn();
 			EnsureLists();
 			RebuildSets();
-			Debug.Log("[AdvancedCritterSensor] OnSpawn begin");
 			// Placeholder art: the vanilla critter sensor turned 180 degrees about the cell
 			// centre (the anim origin is the cell's bottom edge, so the pivot is half a
 			// cell up). Rotation and Pivot are the same properties Rotatable uses for
@@ -145,13 +144,9 @@ namespace AdvancedCritterSensor
 				animController.Pivot = new Vector3(0f, 0.5f, 0f);
 				animController.Rotation = 180f;
 			}
-			Debug.Log("[AdvancedCritterSensor] OnSpawn art applied");
 			HookLogicTick(true);
-			Debug.Log("[AdvancedCritterSensor] OnSpawn logic tick hooked");
 			Evaluate();
-			Debug.Log("[AdvancedCritterSensor] OnSpawn evaluated");
 			UpdateVisualState(force: true);
-			Debug.Log("[AdvancedCritterSensor] OnSpawn end");
 		}
 
 		protected override void OnCleanUp()

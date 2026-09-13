@@ -64,6 +64,12 @@ namespace AdvancedCritterSensor
 		private AdvancedCritterSensor target;
 		private bool built;
 		private bool discoverHooked;
+		/// <summary>
+		/// Set while widget states are being pushed from the model. KToggle fires its change
+		/// event even when set programmatically, so callbacks must be ignored during a refresh
+		/// or they would refresh again, recursively (a stack overflow on first open).
+		/// </summary>
+		private bool refreshing;
 
 		private GameObject root;
 		private GameObject header;
@@ -495,6 +501,8 @@ namespace AdvancedCritterSensor
 
 		private void SetExpanded(SpeciesList list, bool expanded)
 		{
+			if (refreshing || list.expanded == expanded)
+				return;
 			list.expanded = expanded;
 			if (target != null)
 				RefreshSection(list, list.critters ? target.countCritters : target.countEggs, target.separateThresholds);
@@ -537,19 +545,29 @@ namespace AdvancedCritterSensor
 
 		private void RefreshSection(SpeciesList list, bool counting, bool separate)
 		{
-			if (list.toggle != null)
-				PCheckBox.SetCheckState(list.toggle, counting ? PCheckBox.STATE_CHECKED : PCheckBox.STATE_UNCHECKED);
-			if (list.expander != null)
+			bool wasRefreshing = refreshing;
+			refreshing = true;
+			try
 			{
-				list.expander.SetActive(counting);
-				PToggle.SetToggleState(list.expander, list.expanded);
+				if (list.toggle != null)
+					PCheckBox.SetCheckState(list.toggle, counting ? PCheckBox.STATE_CHECKED : PCheckBox.STATE_UNCHECKED);
+				if (list.expander != null)
+				{
+					list.expander.SetActive(counting);
+					if (PToggle.GetToggleState(list.expander) != list.expanded)
+						PToggle.SetToggleState(list.expander, list.expanded);
+				}
+				bool showList = counting && list.expanded;
+				if (list.wrapper != null)
+					list.wrapper.SetActive(showList);
+				if (showList)
+					RefreshRows(list);
+				ShowThreshold(list.threshold, separate && counting);
 			}
-			bool showList = counting && list.expanded;
-			if (list.wrapper != null)
-				list.wrapper.SetActive(showList);
-			if (showList)
-				RefreshRows(list);
-			ShowThreshold(list.threshold, separate && counting);
+			finally
+			{
+				refreshing = wasRefreshing;
+			}
 		}
 
 		private void RefreshRows(SpeciesList list)
