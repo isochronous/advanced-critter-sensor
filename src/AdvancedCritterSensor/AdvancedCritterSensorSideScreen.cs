@@ -9,73 +9,86 @@ using UnityEngine.UI;
 namespace AdvancedCritterSensor
 {
 	/// <summary>
-	/// Side screen for the Advanced Critter Sensor. Built with PLib UI; the three threshold
-	/// editors are clones of the vanilla ThresholdSwitchSideScreen prefab so they look and
-	/// behave exactly like the stock critter sensor's controls.
+	/// Side screen for the Advanced Critter Sensor. The frame is PLib UI; the threshold
+	/// editors are clones of the vanilla ThresholdSwitchSideScreen prefab, and the species
+	/// lists are clones of the vanilla storage-filter row/element prefabs (the tree used by
+	/// every storage container), driven directly rather than through their own scripts.
 	///
 	/// Layout (top to bottom):
 	///   current count line
 	///   [Combined threshold] [Separate thresholds]
 	///   combined threshold editor            (combined mode)
-	///   [x] Count Critters              [v]  (expander, collapsed by default)
-	///       scrollable list: All critters / per-species rows
+	///   [x] Count Critters
+	///       [v] All critters                 (vanilla filter row, collapsed by default)
+	///           [x] icon Species ...
 	///       critter threshold editor         (separate mode)
-	///   [x] Count Eggs                  [v]
-	///       scrollable list: All eggs / per-egg rows
+	///   [x] Count Eggs
+	///       [v] All eggs
+	///           [x] icon Egg ...
 	///       egg threshold editor             (separate mode)
 	/// </summary>
 	public sealed class AdvancedCritterSensorSideScreen : SideScreenContent, IRender200ms
 	{
 		private static readonly FieldInfo SideScreensField = AccessTools.Field(typeof(DetailsScreen), "sideScreens");
 		private static readonly FieldInfo CurrentValueField = AccessTools.Field(typeof(ThresholdSwitchSideScreen), "currentValue");
-		private static readonly FieldInfo AboveToggleField = AccessTools.Field(typeof(ThresholdSwitchSideScreen), "aboveToggle");
-		private static readonly FieldInfo BelowToggleField = AccessTools.Field(typeof(ThresholdSwitchSideScreen), "belowToggle");
-		private static bool labelFixLogged;
-		private static bool expanderFallbackLogged;
+		private static readonly FieldInfo RowPrefabField = AccessTools.Field(typeof(TreeFilterableSideScreen), "rowPrefab");
+		private static readonly FieldInfo ElementPrefabField = AccessTools.Field(typeof(TreeFilterableSideScreen), "elementPrefab");
+		private static readonly FieldInfo RowNameField = AccessTools.Field(typeof(TreeFilterableSideScreenRow), "elementName");
+		private static readonly FieldInfo RowGroupField = AccessTools.Field(typeof(TreeFilterableSideScreenRow), "elementGroup");
+		private static readonly FieldInfo RowCheckField = AccessTools.Field(typeof(TreeFilterableSideScreenRow), "checkBoxToggle");
+		private static readonly FieldInfo RowArrowField = AccessTools.Field(typeof(TreeFilterableSideScreenRow), "arrowToggle");
+		private static readonly FieldInfo RowBgField = AccessTools.Field(typeof(TreeFilterableSideScreenRow), "bgImg");
+		private static readonly FieldInfo ElementNameField = AccessTools.Field(typeof(TreeFilterableSideScreenElement), "elementName");
+		private static readonly FieldInfo ElementCheckField = AccessTools.Field(typeof(TreeFilterableSideScreenElement), "checkBox");
+		private static readonly FieldInfo ElementImageField = AccessTools.Field(typeof(TreeFilterableSideScreenElement), "elementImg");
 
 		private const int Indent = 24;
-		private const float RowHeight = 30f;
-		private const int MaxVisibleRows = 6;
-		private static readonly Vector2 IconSize = new Vector2(24f, 24f);
+		private const float MaxListHeight = 220f;
 		private static readonly Vector2 CheckSize = new Vector2(16f, 16f);
-		private static readonly Vector2 ExpanderSize = new Vector2(16f, 16f);
+
+		// Vanilla row checkbox states (TreeFilterableSideScreenRow.State).
+		private const int RowOff = 0;
+		private const int RowMixed = 1;
+		private const int RowOn = 2;
 
 		private sealed class ThresholdBlock
 		{
 			public GameObject host;
 			public ThresholdSwitchSideScreen screen;
 			public ThresholdAdapter adapter;
-			/// <summary>Label text last applied to the above/below buttons, post LocText filtering.</summary>
-			public readonly Dictionary<LocText, string> appliedLabels = new Dictionary<LocText, string>();
+		}
+
+		private sealed class ElementRefs
+		{
+			public GameObject go;
+			public MultiToggle check;
+			public KImage checkMark;
 		}
 
 		private sealed class SpeciesList
 		{
 			public bool critters;
 			public bool expanded;
-			public GameObject headerRow;
 			public GameObject toggle;
-			public GameObject expander;
-			/// <summary>Fixed-height wrapper around the scroll pane; sized to the row count, capped.</summary>
+			/// <summary>Fixed-height wrapper around the scroll pane.</summary>
 			public GameObject wrapper;
 			public LayoutElement wrapperLayout;
-			/// <summary>Scroll content: the rows panel.</summary>
+			/// <summary>Scroll content; holds the single vanilla filter row.</summary>
 			public GameObject panel;
-			public GameObject allRow;
+			// Vanilla row parts.
+			public GameObject row;
+			public MultiToggle rowCheck;
+			public MultiToggle rowArrow;
+			public GameObject rowGroup;
+			public KImage rowBg;
 			public readonly List<Tag> visible = new List<Tag>();
-			public readonly Dictionary<Tag, GameObject> rows = new Dictionary<Tag, GameObject>();
+			public readonly Dictionary<Tag, ElementRefs> elements = new Dictionary<Tag, ElementRefs>();
 			public ThresholdBlock threshold;
 		}
 
 		private AdvancedCritterSensor target;
 		private bool built;
 		private bool discoverHooked;
-		/// <summary>
-		/// Set while widget states are being pushed from the model. KToggle fires its change
-		/// event even when set programmatically, so callbacks must be ignored during a refresh
-		/// or they would refresh again, recursively (a stack overflow on first open).
-		/// </summary>
-		private bool refreshing;
 
 		private GameObject root;
 		private GameObject header;
@@ -131,9 +144,8 @@ namespace AdvancedCritterSensor
 			if (target == null || !built || !gameObject.activeInHierarchy)
 				return;
 			UpdateHeader();
-			FixToggleLabels(combined);
-			FixToggleLabels(critters.threshold);
-			FixToggleLabels(eggs.threshold);
+			ResizeList(critters);
+			ResizeList(eggs);
 		}
 
 		// ---- construction ----
@@ -197,8 +209,6 @@ namespace AdvancedCritterSensor
 
 			root = rootPanel.AddTo(gameObject);
 
-			// The scroll wrappers are plain (layout-group-free) objects so their height is
-			// governed solely by the LayoutElement set in ResizeList, not by content size.
 			CreateScrollList(critters);
 			CreateScrollList(eggs);
 
@@ -210,15 +220,7 @@ namespace AdvancedCritterSensor
 		private void AddSpeciesSection(PPanel rootPanel, SpeciesList list, string label, string tooltip)
 		{
 			string prefix = list.critters ? "Critter" : "Egg";
-			PPanel headerRow = new PPanel(prefix + "Header")
-			{
-				Direction = PanelDirection.Horizontal,
-				Alignment = TextAnchor.MiddleLeft,
-				Spacing = 4,
-				FlexSize = Vector2.right,
-				DynamicSize = true,
-			};
-			headerRow.AddChild(new PCheckBox("Count" + prefix)
+			rootPanel.AddChild(new PCheckBox("Count" + prefix)
 			{
 				Text = label,
 				ToolTip = tooltip,
@@ -228,31 +230,8 @@ namespace AdvancedCritterSensor
 				FlexSize = Vector2.right,
 				OnChecked = (_, __) => ToggleCounting(list),
 			}.AddOnRealize(go => list.toggle = go));
-			// PLib's "dark" component style is white (for dark backgrounds); the side screen
-			// background is light, so use the light style's dark tint. Fall back to the
-			// (rotated) play-arrow sprite if the expand/contract sprites are missing.
-			bool arrowFallback = PUITuning.Images.Expand == null || PUITuning.Images.Contract == null;
-			if (arrowFallback && !expanderFallbackLogged)
-			{
-				expanderFallbackLogged = true;
-				Debug.LogWarning("[AdvancedCritterSensor] PLib expand/contract sprites missing; using arrow fallback");
-			}
-			headerRow.AddChild(new PToggle(prefix + "Expander")
-			{
-				Size = ExpanderSize,
-				InitialState = false,
-				Color = PUITuning.Colors.ComponentLightStyle,
-				InactiveSprite = arrowFallback ? PUITuning.Images.Arrow : PUITuning.Images.Expand,
-				ActiveSprite = arrowFallback ? PUITuning.Images.Arrow : PUITuning.Images.Contract,
-				ToolTip = ModStrings.ExpanderTooltip,
-				OnStateChanged = (go, on) =>
-				{
-					if (arrowFallback)
-						go.transform.localEulerAngles = new Vector3(0f, 0f, on ? -90f : 0f);
-					SetExpanded(list, on);
-				},
-			}.AddOnRealize(go => list.expander = go));
-			rootPanel.AddChild(headerRow.AddOnRealize(go => list.headerRow = go));
+
+			// The scroll wrapper is inserted after this checkbox in CreateScrollList.
 
 			list.threshold = new ThresholdBlock();
 			rootPanel.AddChild(Host(prefix + "Threshold", Indent).AddOnRealize(go => list.threshold.host = go));
@@ -270,20 +249,25 @@ namespace AdvancedCritterSensor
 			};
 		}
 
+		/// <summary>
+		/// Creates the fixed-height scroll wrapper (a plain object whose height is set by
+		/// ResizeList) holding the vanilla filter row for this list.
+		/// </summary>
 		private void CreateScrollList(SpeciesList list)
 		{
 			string prefix = list.critters ? "Critter" : "Egg";
 			list.wrapper = PUIElements.CreateUI(root, prefix + "ListWrapper");
-			list.wrapper.transform.SetSiblingIndex(list.headerRow.transform.GetSiblingIndex() + 1);
+			list.wrapper.transform.SetSiblingIndex(list.toggle.transform.GetSiblingIndex() + 1);
 			list.wrapperLayout = list.wrapper.AddComponent<LayoutElement>();
 			list.wrapperLayout.flexibleWidth = 1f;
 			list.wrapperLayout.flexibleHeight = 0f;
+			list.wrapperLayout.minHeight = 0f;
+			list.wrapperLayout.preferredHeight = 0f;
 
 			PPanel rows = new PPanel(prefix + "Rows")
 			{
 				Direction = PanelDirection.Vertical,
 				Alignment = TextAnchor.UpperLeft,
-				Spacing = 2,
 				Margin = new RectOffset(Indent, 4, 0, 0),
 				FlexSize = Vector2.right,
 				DynamicSize = true,
@@ -297,23 +281,59 @@ namespace AdvancedCritterSensor
 				FlexSize = Vector2.one,
 			}.AddTo(list.wrapper);
 			PUIElements.SetAnchors(scroll, PUIAnchoring.Stretch, PUIAnchoring.Stretch);
-			ResizeList(list, 0);
+
+			CreateFilterRow(list);
 		}
 
-		private static void ResizeList(SpeciesList list, int rowCount)
+		/// <summary>
+		/// Clones the vanilla TreeFilterableSideScreenRow prefab (the "category" row of the
+		/// storage filter tree) and takes over its widgets. The row's own script is removed
+		/// because it routes every click through a TreeFilterableSideScreen parent.
+		/// </summary>
+		private void CreateFilterRow(SpeciesList list)
 		{
-			if (list.wrapperLayout == null)
+			TreeFilterableSideScreen treePrefab = FindSideScreenPrefab<TreeFilterableSideScreen>();
+			TreeFilterableSideScreenRow rowPrefab = treePrefab != null && RowPrefabField != null ? RowPrefabField.GetValue(treePrefab) as TreeFilterableSideScreenRow : null;
+			if (rowPrefab == null)
+			{
+				Debug.LogWarning("[AdvancedCritterSensor] Vanilla filter row prefab not found; species list unavailable");
 				return;
-			float height = Mathf.Min(rowCount, MaxVisibleRows) * RowHeight + 4f;
-			list.wrapperLayout.minHeight = height;
-			list.wrapperLayout.preferredHeight = height;
+			}
+			GameObject rowGo = Util.KInstantiateUI(rowPrefab.gameObject, list.panel, force_active: true);
+			rowGo.name = (list.critters ? "Critter" : "Egg") + "FilterRow";
+			TreeFilterableSideScreenRow rowScript = rowGo.GetComponent<TreeFilterableSideScreenRow>();
+			LocText name = RowNameField.GetValue(rowScript) as LocText;
+			list.rowGroup = RowGroupField.GetValue(rowScript) as GameObject;
+			list.rowCheck = RowCheckField.GetValue(rowScript) as MultiToggle;
+			list.rowArrow = RowArrowField.GetValue(rowScript) as MultiToggle;
+			list.rowBg = RowBgField.GetValue(rowScript) as KImage;
+			UnityEngine.Object.DestroyImmediate(rowScript);
+
+			if (name != null)
+				name.text = list.critters ? ModStrings.AllCritters : ModStrings.AllEggs;
+			SpeciesList captured = list;
+			if (list.rowCheck != null)
+			{
+				list.rowCheck.onClick = () => ToggleAll(captured);
+				ToolTip tip = list.rowCheck.GetComponent<ToolTip>();
+				if (tip != null)
+					tip.SetSimpleTooltip(list.critters ? ModStrings.AllCrittersTooltip : ModStrings.AllEggsTooltip);
+			}
+			if (list.rowArrow != null)
+				list.rowArrow.onClick = () => SetExpanded(captured, !captured.expanded);
+			// Remove any placeholder elements the prefab may carry.
+			if (list.rowGroup != null)
+				for (int i = list.rowGroup.transform.childCount - 1; i >= 0; i--)
+					Destroy(list.rowGroup.transform.GetChild(i).gameObject);
+			list.row = rowGo;
+			ApplyExpanded(list);
 		}
 
 		private void CreateThresholdEditor(ThresholdBlock block, ThresholdAdapter.Kind kind)
 		{
 			if (block == null || block.host == null)
 				return;
-			ThresholdSwitchSideScreen prefab = FindThresholdPrefab();
+			ThresholdSwitchSideScreen prefab = FindSideScreenPrefab<ThresholdSwitchSideScreen>();
 			if (prefab == null)
 			{
 				Debug.LogWarning("[AdvancedCritterSensor] Vanilla ThresholdSwitchSideScreen prefab not found; threshold editor unavailable");
@@ -330,13 +350,18 @@ namespace AdvancedCritterSensor
 			block.screen = clone.GetComponent<ThresholdSwitchSideScreen>();
 
 			// The vanilla editor shows "Current Count:\n<n>" above its controls; this screen
-			// has its own one-line header instead.
+			// has its own one-line header instead. Keep the label's GameObject active (other
+			// mods, e.g. CustomizeBuildings, address the editor's labels by child index) and
+			// hide it by disabling the text component and taking it out of the layout.
 			LocText currentValue = CurrentValueField != null ? CurrentValueField.GetValue(block.screen) as LocText : null;
 			if (currentValue != null)
-				currentValue.gameObject.SetActive(false);
+			{
+				currentValue.enabled = false;
+				currentValue.gameObject.AddOrGet<LayoutElement>().ignoreLayout = true;
+			}
 		}
 
-		private static ThresholdSwitchSideScreen FindThresholdPrefab()
+		private static T FindSideScreenPrefab<T>() where T : SideScreenContent
 		{
 			if (DetailsScreen.Instance == null || SideScreensField == null)
 				return null;
@@ -345,7 +370,7 @@ namespace AdvancedCritterSensor
 				return null;
 			foreach (DetailsScreen.SideScreenRef r in refs)
 			{
-				ThresholdSwitchSideScreen screen = r.screenPrefab as ThresholdSwitchSideScreen;
+				T screen = r.screenPrefab as T;
 				if (screen != null)
 					return screen;
 			}
@@ -383,63 +408,72 @@ namespace AdvancedCritterSensor
 
 		/// <summary>
 		/// Recomputes the visible entries (discovered plus anything currently selected) and
-		/// rebuilds the row widgets when the set changed. Returns true if rows were rebuilt.
+		/// rebuilds the element widgets under the row when the set changed.
 		/// </summary>
-		private bool RebuildList(SpeciesList list)
+		private void RebuildList(SpeciesList list)
 		{
-			if (list.panel == null)
-				return false;
+			if (list.rowGroup == null)
+				return;
 			List<Tag> visible = list.critters ? CollectCritters() : CollectEggs();
-			if (list.allRow != null && SameTags(visible, list.visible))
-				return false;
+			if (list.elements.Count > 0 && SameTags(visible, list.visible))
+				return;
 
 			list.visible.Clear();
 			list.visible.AddRange(visible);
-			foreach (GameObject row in list.rows.Values)
-				if (row != null)
-					Destroy(row);
-			list.rows.Clear();
-			if (list.allRow != null)
-				Destroy(list.allRow);
+			foreach (ElementRefs element in list.elements.Values)
+				if (element.go != null)
+					Destroy(element.go);
+			list.elements.Clear();
+
+			TreeFilterableSideScreen treePrefab = FindSideScreenPrefab<TreeFilterableSideScreen>();
+			TreeFilterableSideScreenElement elementPrefab = treePrefab != null && ElementPrefabField != null ? ElementPrefabField.GetValue(treePrefab) as TreeFilterableSideScreenElement : null;
+			if (elementPrefab == null)
+				return;
 
 			SpeciesList captured = list;
-			list.allRow = new PCheckBox("All")
-			{
-				Text = list.critters ? ModStrings.AllCritters : ModStrings.AllEggs,
-				ToolTip = list.critters ? ModStrings.AllCrittersTooltip : ModStrings.AllEggsTooltip,
-				TextStyle = PUITuning.Fonts.TextDarkStyle,
-				TextAlignment = TextAnchor.MiddleLeft,
-				CheckSize = CheckSize,
-				FlexSize = Vector2.right,
-				OnChecked = (_, __) => ToggleAll(captured),
-			}.AddTo(list.panel);
-
 			foreach (Tag tag in list.visible)
 			{
 				Tag capturedTag = tag;
-				GameObject prefab = Assets.GetPrefab(tag);
-				Sprite icon = null;
-				if (prefab != null)
+				GameObject go = Util.KInstantiateUI(elementPrefab.gameObject, list.rowGroup, force_active: true);
+				go.name = tag.Name;
+				TreeFilterableSideScreenElement script = go.GetComponent<TreeFilterableSideScreenElement>();
+				LocText name = ElementNameField.GetValue(script) as LocText;
+				MultiToggle check = ElementCheckField.GetValue(script) as MultiToggle;
+				KImage image = ElementImageField.GetValue(script) as KImage;
+				UnityEngine.Object.DestroyImmediate(script);
+
+				if (name != null)
+					name.text = tag.ProperName();
+				if (image != null)
 				{
-					var ui = Def.GetUISprite(prefab);
-					icon = ui != null ? ui.first : null;
+					var ui = Def.GetUISprite(tag);
+					if (ui != null && ui.first != null)
+					{
+						image.sprite = ui.first;
+						image.color = ui.second;
+						image.gameObject.SetActive(true);
+					}
+					else
+					{
+						image.gameObject.SetActive(false);
+					}
 				}
-				list.rows[tag] = new PCheckBox(tag.Name)
-				{
-					Text = tag.ProperName(),
-					ToolTip = tag.ProperName(),
-					Sprite = icon,
-					SpriteSize = IconSize,
-					SpritePosition = TextAnchor.MiddleLeft,
-					TextStyle = PUITuning.Fonts.TextDarkStyle,
-					TextAlignment = TextAnchor.MiddleLeft,
-					CheckSize = CheckSize,
-					FlexSize = Vector2.right,
-					OnChecked = (_, __) => ToggleSpecies(captured, capturedTag),
-				}.AddTo(list.panel);
+				ElementRefs refs = new ElementRefs { go = go, check = check, checkMark = FindCheckMark(check) };
+				if (check != null)
+					check.onClick = () => ToggleSpecies(captured, capturedTag);
+				list.elements[tag] = refs;
 			}
-			ResizeList(list, list.visible.Count + 1);
-			return true;
+		}
+
+		/// <summary>The check-mark image is the KImage on a child of the checkbox toggle.</summary>
+		private static KImage FindCheckMark(MultiToggle check)
+		{
+			if (check == null)
+				return null;
+			foreach (KImage image in check.GetComponentsInChildren<KImage>(true))
+				if (image.gameObject != check.gameObject)
+					return image;
+			return null;
 		}
 
 		private static bool SameTags(List<Tag> a, List<Tag> b)
@@ -528,11 +562,21 @@ namespace AdvancedCritterSensor
 
 		private void SetExpanded(SpeciesList list, bool expanded)
 		{
-			if (refreshing || list.expanded == expanded)
+			if (list.expanded == expanded)
 				return;
 			list.expanded = expanded;
-			if (target != null)
-				RefreshSection(list, list.critters ? target.countCritters : target.countEggs, target.separateThresholds);
+			ApplyExpanded(list);
+		}
+
+		private static void ApplyExpanded(SpeciesList list)
+		{
+			if (list.rowArrow != null)
+				list.rowArrow.ChangeState(list.expanded ? 1 : 0);
+			if (list.rowGroup != null)
+				list.rowGroup.SetActive(list.expanded);
+			if (list.rowBg != null)
+				list.rowBg.enabled = list.expanded;
+			ResizeList(list, force: true);
 		}
 
 		private void ToggleAll(SpeciesList list)
@@ -572,48 +616,57 @@ namespace AdvancedCritterSensor
 
 		private void RefreshSection(SpeciesList list, bool counting, bool separate)
 		{
-			bool wasRefreshing = refreshing;
-			refreshing = true;
-			try
+			if (list.toggle != null)
+				PCheckBox.SetCheckState(list.toggle, counting ? PCheckBox.STATE_CHECKED : PCheckBox.STATE_UNCHECKED);
+			if (list.wrapper != null)
+				list.wrapper.SetActive(counting);
+			if (counting)
 			{
-				if (list.toggle != null)
-					PCheckBox.SetCheckState(list.toggle, counting ? PCheckBox.STATE_CHECKED : PCheckBox.STATE_UNCHECKED);
-				if (list.expander != null)
-				{
-					list.expander.SetActive(counting);
-					if (PToggle.GetToggleState(list.expander) != list.expanded)
-						PToggle.SetToggleState(list.expander, list.expanded);
-				}
-				bool showList = counting && list.expanded;
-				if (list.wrapper != null)
-					list.wrapper.SetActive(showList);
-				if (showList)
-					RefreshRows(list);
-				ShowThreshold(list.threshold, separate && counting);
+				RefreshRows(list);
+				ResizeList(list, force: true);
 			}
-			finally
-			{
-				refreshing = wasRefreshing;
-			}
+			ShowThreshold(list.threshold, separate && counting);
 		}
 
+		/// <summary>Pushes the model's selection into the row checkbox (tri-state) and elements.</summary>
 		private void RefreshRows(SpeciesList list)
 		{
 			if (target == null)
 				return;
 			bool all = list.critters ? target.allCritters : target.allEggs;
-			if (list.allRow != null)
+			if (list.rowCheck != null)
 			{
-				int state = all ? PCheckBox.STATE_CHECKED : (target.AnySpeciesSelected(list.critters) ? PCheckBox.STATE_PARTIAL : PCheckBox.STATE_UNCHECKED);
-				PCheckBox.SetCheckState(list.allRow, state);
+				int state = all ? RowOn : (target.AnySpeciesSelected(list.critters) ? RowMixed : RowOff);
+				list.rowCheck.ChangeState(state);
 			}
-			foreach (KeyValuePair<Tag, GameObject> row in list.rows)
+			foreach (KeyValuePair<Tag, ElementRefs> entry in list.elements)
 			{
-				if (row.Value == null)
-					continue;
-				bool selected = target.IsSpeciesSelected(list.critters, row.Key);
-				PCheckBox.SetCheckState(row.Value, selected ? PCheckBox.STATE_CHECKED : PCheckBox.STATE_UNCHECKED);
+				bool selected = target.IsSpeciesSelected(list.critters, entry.Key);
+				if (entry.Value.check != null)
+					entry.Value.check.ChangeState(selected ? 1 : 0);
+				if (entry.Value.checkMark != null)
+					entry.Value.checkMark.enabled = selected;
 			}
+		}
+
+		/// <summary>
+		/// Sizes the scroll wrapper to the row's preferred height (collapsed: just the
+		/// header row; expanded: header plus elements), capped so long lists scroll.
+		/// </summary>
+		private static void ResizeList(SpeciesList list, bool force = false)
+		{
+			if (list.wrapperLayout == null || list.panel == null || list.wrapper == null || !list.wrapper.activeSelf)
+				return;
+			RectTransform rect = list.panel.transform as RectTransform;
+			if (rect == null)
+				return;
+			if (force)
+				LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
+			float wanted = Mathf.Min(LayoutUtility.GetPreferredHeight(rect) + 4f, MaxListHeight);
+			if (wanted <= 0f || Mathf.Approximately(wanted, list.wrapperLayout.preferredHeight))
+				return;
+			list.wrapperLayout.minHeight = wanted;
+			list.wrapperLayout.preferredHeight = wanted;
 		}
 
 		private void ShowThreshold(ThresholdBlock block, bool visible)
@@ -630,44 +683,6 @@ namespace AdvancedCritterSensor
 			block.adapter.sensor = target;
 			block.screen.SetTarget(block.adapter.gameObject);
 			block.screen.Show(true);
-			FixToggleLabels(block);
-		}
-
-		/// <summary>
-		/// The vanilla screen writes "Above"/"Below" onto its two buttons in OnSpawn. In the
-		/// cloned editors that text has been observed replaced by the automation-state
-		/// sentence from the prefab, so re-apply it whenever it drifts (and log the first
-		/// occurrence with enough state to find the cause).
-		/// </summary>
-		private static void FixToggleLabels(ThresholdBlock block)
-		{
-			if (block == null || block.screen == null || !block.screen.gameObject.activeInHierarchy)
-				return;
-			FixToggleLabel(block, AboveToggleField, STRINGS.UI.UISIDESCREENS.THRESHOLD_SWITCH_SIDESCREEN.ABOVE_BUTTON);
-			FixToggleLabel(block, BelowToggleField, STRINGS.UI.UISIDESCREENS.THRESHOLD_SWITCH_SIDESCREEN.BELOW_BUTTON);
-		}
-
-		private static void FixToggleLabel(ThresholdBlock block, FieldInfo toggleField, string expected)
-		{
-			KToggle toggle = toggleField != null ? toggleField.GetValue(block.screen) as KToggle : null;
-			if (toggle == null || toggle.transform.childCount == 0)
-				return;
-			LocText label = toggle.transform.GetChild(0).GetComponent<LocText>();
-			if (label == null)
-				return;
-			string current = label.text;
-			string applied;
-			if (block.appliedLabels.TryGetValue(label, out applied) && applied == current)
-				return;
-			if (!labelFixLogged && applied != null)
-			{
-				labelFixLogged = true;
-				Debug.LogWarning("[AdvancedCritterSensor] Threshold button label drifted to '" + current + "' (key='" + label.key +
-					"', spawned=" + block.screen.isSpawned + ", active=" + block.screen.gameObject.activeInHierarchy + "); resetting to '" + expected + "'");
-			}
-			label.key = "";
-			label.SetText(expected);
-			block.appliedLabels[label] = label.text;
 		}
 
 		private static void SetButtonSelected(GameObject button, bool selected)
