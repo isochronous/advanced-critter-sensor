@@ -43,6 +43,7 @@ namespace AdvancedCritterSensor
 		public const string NotCounting = "Nothing is being counted";
 		public const string NotInRoom = "Not in a room";
 
+		public const string ExpanderTooltip = "Show or hide the list of types to count";
 		public const string AllCritters = "All critters";
 		public const string AllCrittersTooltip = "Count every critter species, including ones discovered later";
 		public const string AllEggs = "All eggs";

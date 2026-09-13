@@ -4,6 +4,7 @@ using System.Reflection;
 using HarmonyLib;
 using PeterHan.PLib.UI;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace AdvancedCritterSensor
 {
@@ -16,11 +17,11 @@ namespace AdvancedCritterSensor
 	///   current count line
 	///   [Combined threshold] [Separate thresholds]
 	///   combined threshold editor            (combined mode)
-	///   [x] Count Critters
-	///       [x] All critters / per-species rows
+	///   [x] Count Critters              [v]  (expander, collapsed by default)
+	///       scrollable list: All critters / per-species rows
 	///       critter threshold editor         (separate mode)
-	///   [x] Count Eggs
-	///       [x] All eggs / per-egg rows
+	///   [x] Count Eggs                  [v]
+	///       scrollable list: All eggs / per-egg rows
 	///       egg threshold editor             (separate mode)
 	/// </summary>
 	public sealed class AdvancedCritterSensorSideScreen : SideScreenContent, IRender200ms
@@ -29,8 +30,11 @@ namespace AdvancedCritterSensor
 		private static readonly FieldInfo CurrentValueField = AccessTools.Field(typeof(ThresholdSwitchSideScreen), "currentValue");
 
 		private const int Indent = 24;
+		private const float RowHeight = 30f;
+		private const int MaxVisibleRows = 6;
 		private static readonly Vector2 IconSize = new Vector2(24f, 24f);
 		private static readonly Vector2 CheckSize = new Vector2(16f, 16f);
+		private static readonly Vector2 ExpanderSize = new Vector2(16f, 16f);
 
 		private sealed class ThresholdBlock
 		{
@@ -42,7 +46,14 @@ namespace AdvancedCritterSensor
 		private sealed class SpeciesList
 		{
 			public bool critters;
+			public bool expanded;
+			public GameObject headerRow;
 			public GameObject toggle;
+			public GameObject expander;
+			/// <summary>Fixed-height wrapper around the scroll pane; sized to the row count, capped.</summary>
+			public GameObject wrapper;
+			public LayoutElement wrapperLayout;
+			/// <summary>Scroll content: the rows panel.</summary>
 			public GameObject panel;
 			public GameObject allRow;
 			public readonly List<Tag> visible = new List<Tag>();
@@ -54,6 +65,7 @@ namespace AdvancedCritterSensor
 		private bool built;
 		private bool discoverHooked;
 
+		private GameObject root;
 		private GameObject header;
 		private GameObject combinedButton;
 		private GameObject separateButton;
@@ -116,7 +128,7 @@ namespace AdvancedCritterSensor
 				return;
 			built = true;
 
-			PPanel root = new PPanel("AdvancedCritterSensorRoot")
+			PPanel rootPanel = new PPanel("AdvancedCritterSensorRoot")
 			{
 				Direction = PanelDirection.Vertical,
 				Alignment = TextAnchor.UpperLeft,
@@ -126,10 +138,10 @@ namespace AdvancedCritterSensor
 				DynamicSize = true,
 			};
 
-			root.AddChild(new PLabel("Header")
+			rootPanel.AddChild(new PLabel("Header")
 			{
 				Text = " ",
-				TextStyle = PUITuning.Fonts.TextLightStyle,
+				TextStyle = PUITuning.Fonts.TextDarkStyle,
 				TextAlignment = TextAnchor.MiddleLeft,
 				FlexSize = Vector2.right,
 				DynamicSize = true,
@@ -147,7 +159,6 @@ namespace AdvancedCritterSensor
 			{
 				Text = ModStrings.ModeCombined,
 				ToolTip = ModStrings.ModeCombinedTooltip,
-				TextStyle = PUITuning.Fonts.TextLightStyle,
 				Margin = new RectOffset(8, 8, 5, 5),
 				FlexSize = Vector2.right,
 				OnClick = _ => SetMode(false),
@@ -156,51 +167,62 @@ namespace AdvancedCritterSensor
 			{
 				Text = ModStrings.ModeSeparate,
 				ToolTip = ModStrings.ModeSeparateTooltip,
-				TextStyle = PUITuning.Fonts.TextLightStyle,
 				Margin = new RectOffset(8, 8, 5, 5),
 				FlexSize = Vector2.right,
 				OnClick = _ => SetMode(true),
 			}.AddOnRealize(go => separateButton = go));
-			root.AddChild(modeRow);
+			rootPanel.AddChild(modeRow);
 
 			combined = new ThresholdBlock();
-			root.AddChild(Host("CombinedThreshold", 0).AddOnRealize(go => combined.host = go));
+			rootPanel.AddChild(Host("CombinedThreshold", 0).AddOnRealize(go => combined.host = go));
 
-			AddSpeciesSection(root, critters, STRINGS.BUILDINGS.PREFABS.LOGICCRITTERCOUNTSENSOR.COUNT_CRITTER_LABEL, ModStrings.CountCrittersTooltip);
-			AddSpeciesSection(root, eggs, STRINGS.BUILDINGS.PREFABS.LOGICCRITTERCOUNTSENSOR.COUNT_EGG_LABEL, ModStrings.CountEggsTooltip);
+			AddSpeciesSection(rootPanel, critters, STRINGS.BUILDINGS.PREFABS.LOGICCRITTERCOUNTSENSOR.COUNT_CRITTER_LABEL, ModStrings.CountCrittersTooltip);
+			AddSpeciesSection(rootPanel, eggs, STRINGS.BUILDINGS.PREFABS.LOGICCRITTERCOUNTSENSOR.COUNT_EGG_LABEL, ModStrings.CountEggsTooltip);
 
-			root.AddTo(gameObject);
+			root = rootPanel.AddTo(gameObject);
+
+			// The scroll wrappers are plain (layout-group-free) objects so their height is
+			// governed solely by the LayoutElement set in ResizeList, not by content size.
+			CreateScrollList(critters);
+			CreateScrollList(eggs);
 
 			CreateThresholdEditor(combined, ThresholdAdapter.Kind.Combined);
 			CreateThresholdEditor(critters.threshold, ThresholdAdapter.Kind.Critters);
 			CreateThresholdEditor(eggs.threshold, ThresholdAdapter.Kind.Eggs);
 		}
 
-		private void AddSpeciesSection(PPanel root, SpeciesList list, string label, string tooltip)
+		private void AddSpeciesSection(PPanel rootPanel, SpeciesList list, string label, string tooltip)
 		{
-			root.AddChild(new PCheckBox("Count" + (list.critters ? "Critters" : "Eggs"))
+			string prefix = list.critters ? "Critter" : "Egg";
+			PPanel headerRow = new PPanel(prefix + "Header")
+			{
+				Direction = PanelDirection.Horizontal,
+				Alignment = TextAnchor.MiddleLeft,
+				Spacing = 4,
+				FlexSize = Vector2.right,
+				DynamicSize = true,
+			};
+			headerRow.AddChild(new PCheckBox("Count" + prefix)
 			{
 				Text = label,
 				ToolTip = tooltip,
-				TextStyle = PUITuning.Fonts.TextLightStyle,
+				TextStyle = PUITuning.Fonts.TextDarkStyle,
 				TextAlignment = TextAnchor.MiddleLeft,
 				CheckSize = CheckSize,
 				FlexSize = Vector2.right,
 				OnChecked = (_, __) => ToggleCounting(list),
 			}.AddOnRealize(go => list.toggle = go));
-
-			root.AddChild(new PPanel((list.critters ? "Critter" : "Egg") + "List")
+			headerRow.AddChild(new PToggle(prefix + "Expander")
 			{
-				Direction = PanelDirection.Vertical,
-				Alignment = TextAnchor.UpperLeft,
-				Spacing = 2,
-				Margin = new RectOffset(Indent, 0, 0, 0),
-				FlexSize = Vector2.right,
-				DynamicSize = true,
-			}.AddOnRealize(go => list.panel = go));
+				Size = ExpanderSize,
+				InitialState = false,
+				ToolTip = ModStrings.ExpanderTooltip,
+				OnStateChanged = (_, on) => SetExpanded(list, on),
+			}.AddOnRealize(go => list.expander = go));
+			rootPanel.AddChild(headerRow.AddOnRealize(go => list.headerRow = go));
 
 			list.threshold = new ThresholdBlock();
-			root.AddChild(Host((list.critters ? "Critter" : "Egg") + "Threshold", Indent).AddOnRealize(go => list.threshold.host = go));
+			rootPanel.AddChild(Host(prefix + "Threshold", Indent).AddOnRealize(go => list.threshold.host = go));
 		}
 
 		private static PPanel Host(string name, int indent)
@@ -213,6 +235,45 @@ namespace AdvancedCritterSensor
 				FlexSize = Vector2.right,
 				DynamicSize = true,
 			};
+		}
+
+		private void CreateScrollList(SpeciesList list)
+		{
+			string prefix = list.critters ? "Critter" : "Egg";
+			list.wrapper = PUIElements.CreateUI(root, prefix + "ListWrapper");
+			list.wrapper.transform.SetSiblingIndex(list.headerRow.transform.GetSiblingIndex() + 1);
+			list.wrapperLayout = list.wrapper.AddComponent<LayoutElement>();
+			list.wrapperLayout.flexibleWidth = 1f;
+			list.wrapperLayout.flexibleHeight = 0f;
+
+			PPanel rows = new PPanel(prefix + "Rows")
+			{
+				Direction = PanelDirection.Vertical,
+				Alignment = TextAnchor.UpperLeft,
+				Spacing = 2,
+				Margin = new RectOffset(Indent, 4, 0, 0),
+				FlexSize = Vector2.right,
+				DynamicSize = true,
+			}.AddOnRealize(go => list.panel = go);
+			GameObject scroll = new PScrollPane(prefix + "Scroll")
+			{
+				Child = rows,
+				ScrollVertical = true,
+				ScrollHorizontal = false,
+				AlwaysShowVertical = false,
+				FlexSize = Vector2.one,
+			}.AddTo(list.wrapper);
+			PUIElements.SetAnchors(scroll, PUIAnchoring.Stretch, PUIAnchoring.Stretch);
+			ResizeList(list, 0);
+		}
+
+		private static void ResizeList(SpeciesList list, int rowCount)
+		{
+			if (list.wrapperLayout == null)
+				return;
+			float height = Mathf.Min(rowCount, MaxVisibleRows) * RowHeight + 4f;
+			list.wrapperLayout.minHeight = height;
+			list.wrapperLayout.preferredHeight = height;
 		}
 
 		private void CreateThresholdEditor(ThresholdBlock block, ThresholdAdapter.Kind kind)
@@ -293,6 +354,8 @@ namespace AdvancedCritterSensor
 		/// </summary>
 		private bool RebuildList(SpeciesList list)
 		{
+			if (list.panel == null)
+				return false;
 			List<Tag> visible = list.critters ? CollectCritters() : CollectEggs();
 			if (list.allRow != null && SameTags(visible, list.visible))
 				return false;
@@ -311,7 +374,7 @@ namespace AdvancedCritterSensor
 			{
 				Text = list.critters ? ModStrings.AllCritters : ModStrings.AllEggs,
 				ToolTip = list.critters ? ModStrings.AllCrittersTooltip : ModStrings.AllEggsTooltip,
-				TextStyle = PUITuning.Fonts.TextLightStyle,
+				TextStyle = PUITuning.Fonts.TextDarkStyle,
 				TextAlignment = TextAnchor.MiddleLeft,
 				CheckSize = CheckSize,
 				FlexSize = Vector2.right,
@@ -335,13 +398,14 @@ namespace AdvancedCritterSensor
 					Sprite = icon,
 					SpriteSize = IconSize,
 					SpritePosition = TextAnchor.MiddleLeft,
-					TextStyle = PUITuning.Fonts.TextLightStyle,
+					TextStyle = PUITuning.Fonts.TextDarkStyle,
 					TextAlignment = TextAnchor.MiddleLeft,
 					CheckSize = CheckSize,
 					FlexSize = Vector2.right,
 					OnChecked = (_, __) => ToggleSpecies(captured, capturedTag),
 				}.AddTo(list.panel);
 			}
+			ResizeList(list, list.visible.Count + 1);
 			return true;
 		}
 
@@ -429,6 +493,13 @@ namespace AdvancedCritterSensor
 			RefreshAll();
 		}
 
+		private void SetExpanded(SpeciesList list, bool expanded)
+		{
+			list.expanded = expanded;
+			if (target != null)
+				RefreshSection(list, list.critters ? target.countCritters : target.countEggs, target.separateThresholds);
+		}
+
 		private void ToggleAll(SpeciesList list)
 		{
 			if (target == null)
@@ -468,9 +539,15 @@ namespace AdvancedCritterSensor
 		{
 			if (list.toggle != null)
 				PCheckBox.SetCheckState(list.toggle, counting ? PCheckBox.STATE_CHECKED : PCheckBox.STATE_UNCHECKED);
-			if (list.panel != null)
-				list.panel.SetActive(counting);
-			if (counting)
+			if (list.expander != null)
+			{
+				list.expander.SetActive(counting);
+				PToggle.SetToggleState(list.expander, list.expanded);
+			}
+			bool showList = counting && list.expanded;
+			if (list.wrapper != null)
+				list.wrapper.SetActive(showList);
+			if (showList)
 				RefreshRows(list);
 			ShowThreshold(list.threshold, separate && counting);
 		}
