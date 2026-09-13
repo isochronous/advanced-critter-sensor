@@ -135,18 +135,23 @@ namespace AdvancedCritterSensor
 			base.OnSpawn();
 			EnsureLists();
 			RebuildSets();
-			// Placeholder art: the vanilla critter sensor, upside down. The flip mirrors the
-			// art around its origin at the bottom edge of the cell, which would draw it one
-			// cell too low; the world-space offset (applied independently of the flip)
-			// moves it back up.
+			Debug.Log("[AdvancedCritterSensor] OnSpawn begin");
+			// Placeholder art: the vanilla critter sensor turned 180 degrees about the cell
+			// centre (the anim origin is the cell's bottom edge, so the pivot is half a
+			// cell up). Rotation and Pivot are the same properties Rotatable uses for
+			// rotated buildings; unlike Offset they never re-register with the batcher.
 			if (animController != null)
 			{
-				animController.FlipY = true;
-				animController.Offset = new Vector3(0f, Grid.CellSizeInMeters, 0f);
+				animController.Pivot = new Vector3(0f, 0.5f, 0f);
+				animController.Rotation = 180f;
 			}
+			Debug.Log("[AdvancedCritterSensor] OnSpawn art applied");
 			HookLogicTick(true);
+			Debug.Log("[AdvancedCritterSensor] OnSpawn logic tick hooked");
 			Evaluate();
+			Debug.Log("[AdvancedCritterSensor] OnSpawn evaluated");
 			UpdateVisualState(force: true);
+			Debug.Log("[AdvancedCritterSensor] OnSpawn end");
 		}
 
 		protected override void OnCleanUp()
