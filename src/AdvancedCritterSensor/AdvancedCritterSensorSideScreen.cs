@@ -127,7 +127,6 @@ namespace AdvancedCritterSensor
 			RebuildList(critters);
 			RebuildList(eggs);
 			RefreshAll();
-			DumpDiagnostics();
 		}
 
 		// ---- temporary layout diagnostics (logged once per game session) ----
@@ -141,9 +140,9 @@ namespace AdvancedCritterSensor
 			{
 				StringBuilder sb = new StringBuilder();
 				GameObject sideRoot = SideScreenRootField != null && DetailsScreen.Instance != null ? SideScreenRootField.GetValue(DetailsScreen.Instance) as GameObject : null;
-				sb.AppendLine("[AdvancedCritterSensor] ---- side screen root (Options row lives here) ----");
+				sb.AppendLine("[AdvancedCritterSensor] ---- side screen root, active objects only, after layout ----");
 				if (sideRoot != null)
-					DumpHierarchy(sideRoot.transform, 0, 3, sb);
+					DumpHierarchy(sideRoot.transform, 0, 9, sb);
 				else
 					sb.AppendLine("(sideScreen not found)");
 				Debug.Log(sb.ToString());
@@ -156,6 +155,8 @@ namespace AdvancedCritterSensor
 
 		private static void DumpHierarchy(Transform t, int depth, int maxDepth, StringBuilder sb)
 		{
+			if (!t.gameObject.activeSelf || sb.Length > 120000)
+				return;
 			sb.Append(' ', depth * 2).AppendLine(Describe(t));
 			if (depth >= maxDepth)
 				return;
@@ -169,8 +170,13 @@ namespace AdvancedCritterSensor
 			sb.Append(t.name).Append(t.gameObject.activeSelf ? "" : " [inactive]");
 			RectTransform rt = t as RectTransform;
 			if (rt != null)
+			{
+				Vector3[] corners = new Vector3[4];
+				rt.GetWorldCorners(corners);
 				sb.Append(" rect=").Append(rt.rect.width.ToString("0")).Append('x').Append(rt.rect.height.ToString("0"))
-					.Append(" anchor=").Append(rt.anchorMin).Append(rt.anchorMax).Append(" pos=").Append(rt.anchoredPosition);
+					.Append(" world=(").Append(corners[0].x.ToString("0")).Append(',').Append(corners[0].y.ToString("0")).Append(")-(")
+					.Append(corners[2].x.ToString("0")).Append(',').Append(corners[2].y.ToString("0")).Append(')');
+			}
 			LayoutElement le = t.GetComponent<LayoutElement>();
 			if (le != null)
 				sb.Append(" LE(min=").Append(le.minHeight).Append(" pref=").Append(le.preferredHeight).Append(" flex=").Append(le.flexibleHeight).Append(le.ignoreLayout ? " ignore" : "").Append(')');
@@ -218,6 +224,7 @@ namespace AdvancedCritterSensor
 			UpdateHeader();
 			ResizeList(critters);
 			ResizeList(eggs);
+			DumpDiagnostics();
 		}
 
 		// ---- construction ----
