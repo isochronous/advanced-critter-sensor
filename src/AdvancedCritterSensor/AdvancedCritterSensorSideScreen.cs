@@ -200,8 +200,7 @@ namespace AdvancedCritterSensor
 		{
 			if (string.IsNullOrEmpty(s))
 				return "";
-			s = s.Replace("
-", " ");
+			s = s.Replace('\n', ' ');
 			return s.Length <= max ? s : s.Substring(0, max) + "...";
 		}
 
