@@ -33,9 +33,10 @@ namespace AdvancedCritterSensor
 		public const string SideScreenTitleKey = "STRINGS.UI.UISIDESCREENS.ADVANCED_CRITTER_SENSOR_SIDE_SCREEN.TITLE";
 		public const string SideScreenTitle = "Advanced Critter Sensor";
 
-		public const string ModeCombined = "Combined threshold";
+		public const string ModeLabel = "Thresholds:";
+		public const string ModeCombined = "Combined";
 		public static readonly string ModeCombinedTooltip = "One threshold for critters and eggs together. Bit 1 sends a " + Green + " when the combined count passes it.";
-		public const string ModeSeparate = "Separate thresholds";
+		public const string ModeSeparate = "Separate";
 		public static readonly string ModeSeparateTooltip = "Separate thresholds for critters and eggs. Bit 1 reports the critter count, bit 2 reports the egg count.";
 
 		public const string CurrentCritters = "Current Critters: {0}";

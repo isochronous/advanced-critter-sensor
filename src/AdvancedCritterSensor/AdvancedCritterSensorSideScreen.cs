@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using System.Text;
 using HarmonyLib;
 using PeterHan.PLib.UI;
 using UnityEngine;
@@ -42,10 +41,10 @@ namespace AdvancedCritterSensor
 		private static readonly FieldInfo ElementNameField = AccessTools.Field(typeof(TreeFilterableSideScreenElement), "elementName");
 		private static readonly FieldInfo ElementCheckField = AccessTools.Field(typeof(TreeFilterableSideScreenElement), "checkBox");
 		private static readonly FieldInfo ElementImageField = AccessTools.Field(typeof(TreeFilterableSideScreenElement), "elementImg");
-		private static readonly FieldInfo SideScreenRootField = AccessTools.Field(typeof(DetailsScreen), "sideScreen");
-		private static bool hierarchyDumped;
 
 		private const int Indent = 24;
+		/// <summary>Horizontal inset for this screen's own rows; the cloned vanilla widgets carry their own.</summary>
+		private const int Inset = 8;
 		private const float MaxListHeight = 220f;
 		private static readonly Vector2 CheckSize = new Vector2(16f, 16f);
 
@@ -129,81 +128,6 @@ namespace AdvancedCritterSensor
 			RefreshAll();
 		}
 
-		// ---- temporary layout diagnostics (logged once per game session) ----
-
-		private void DumpDiagnostics()
-		{
-			if (hierarchyDumped)
-				return;
-			hierarchyDumped = true;
-			try
-			{
-				StringBuilder sb = new StringBuilder();
-				GameObject sideRoot = SideScreenRootField != null && DetailsScreen.Instance != null ? SideScreenRootField.GetValue(DetailsScreen.Instance) as GameObject : null;
-				sb.AppendLine("[AdvancedCritterSensor] ---- side screen root, active objects only, after layout ----");
-				if (sideRoot != null)
-					DumpHierarchy(sideRoot.transform, 0, 9, sb);
-				else
-					sb.AppendLine("(sideScreen not found)");
-				Debug.Log(sb.ToString());
-			}
-			catch (Exception ex)
-			{
-				Debug.LogWarning("[AdvancedCritterSensor] diagnostics failed: " + ex);
-			}
-		}
-
-		private static void DumpHierarchy(Transform t, int depth, int maxDepth, StringBuilder sb)
-		{
-			if (!t.gameObject.activeSelf || sb.Length > 120000)
-				return;
-			sb.Append(' ', depth * 2).AppendLine(Describe(t));
-			if (depth >= maxDepth)
-				return;
-			for (int i = 0; i < t.childCount; i++)
-				DumpHierarchy(t.GetChild(i), depth + 1, maxDepth, sb);
-		}
-
-		private static string Describe(Transform t)
-		{
-			StringBuilder sb = new StringBuilder();
-			sb.Append(t.name).Append(t.gameObject.activeSelf ? "" : " [inactive]");
-			RectTransform rt = t as RectTransform;
-			if (rt != null)
-			{
-				Vector3[] corners = new Vector3[4];
-				rt.GetWorldCorners(corners);
-				sb.Append(" rect=").Append(rt.rect.width.ToString("0")).Append('x').Append(rt.rect.height.ToString("0"))
-					.Append(" world=(").Append(corners[0].x.ToString("0")).Append(',').Append(corners[0].y.ToString("0")).Append(")-(")
-					.Append(corners[2].x.ToString("0")).Append(',').Append(corners[2].y.ToString("0")).Append(')');
-			}
-			LayoutElement le = t.GetComponent<LayoutElement>();
-			if (le != null)
-				sb.Append(" LE(min=").Append(le.minHeight).Append(" pref=").Append(le.preferredHeight).Append(" flex=").Append(le.flexibleHeight).Append(le.ignoreLayout ? " ignore" : "").Append(')');
-			foreach (Component c in t.GetComponents<Component>())
-			{
-				if (c is LayoutGroup lg)
-					sb.Append(' ').Append(c.GetType().Name).Append("(pad ").Append(lg.padding.top).Append('/').Append(lg.padding.bottom).Append(')');
-				else if (c is ContentSizeFitter csf)
-					sb.Append(" Fitter(").Append(csf.verticalFit).Append(')');
-				else if (c is LocText lt)
-					sb.Append(" LocText").Append(lt.enabled ? "" : "[disabled]").Append("='").Append(Truncate(lt.text, 30)).Append("'");
-				else if (c is Image img && !(c is LocText))
-					sb.Append(' ').Append(c.GetType().Name).Append("(sprite=").Append(img.sprite != null ? img.sprite.name : "null").Append(img.enabled ? "" : ",disabled").Append(')');
-				else if (c is KScreen || c is MultiToggle || c is KButton || c is KSlider)
-					sb.Append(' ').Append(c.GetType().Name);
-			}
-			return sb.ToString();
-		}
-
-		private static string Truncate(string s, int max)
-		{
-			if (string.IsNullOrEmpty(s))
-				return "";
-			s = s.Replace('\n', ' ');
-			return s.Length <= max ? s : s.Substring(0, max) + "...";
-		}
-
 		public override void ClearTarget()
 		{
 			base.ClearTarget();
@@ -224,7 +148,6 @@ namespace AdvancedCritterSensor
 			UpdateHeader();
 			ResizeList(critters);
 			ResizeList(eggs);
-			DumpDiagnostics();
 		}
 
 		// ---- construction ----
@@ -235,12 +158,17 @@ namespace AdvancedCritterSensor
 				return;
 			built = true;
 
+			// The frame must not report a preferred width above the vanilla side screen's
+			// 280px: the details panel grows to fit, while its Options header stays 280 and
+			// ends up right-aligned with bare panel showing on the left. The cloned threshold
+			// editor is exactly 280 wide, so the root carries no horizontal margin; this
+			// screen's own rows inset themselves instead.
 			PPanel rootPanel = new PPanel("AdvancedCritterSensorRoot")
 			{
 				Direction = PanelDirection.Vertical,
 				Alignment = TextAnchor.UpperLeft,
 				Spacing = 6,
-				Margin = new RectOffset(8, 8, 8, 8),
+				Margin = new RectOffset(0, 0, 8, 8),
 				FlexSize = Vector2.right,
 				DynamicSize = true,
 			};
@@ -250,6 +178,7 @@ namespace AdvancedCritterSensor
 				Text = " ",
 				TextStyle = PUITuning.Fonts.TextDarkStyle,
 				TextAlignment = TextAnchor.MiddleLeft,
+				Margin = new RectOffset(Inset, Inset, 0, 0),
 				FlexSize = Vector2.right,
 				DynamicSize = true,
 			}.AddOnRealize(go => header = go));
@@ -257,11 +186,18 @@ namespace AdvancedCritterSensor
 			PPanel modeRow = new PPanel("ModeRow")
 			{
 				Direction = PanelDirection.Horizontal,
-				Alignment = TextAnchor.MiddleCenter,
-				Spacing = 4,
+				Alignment = TextAnchor.MiddleLeft,
+				Spacing = 6,
+				Margin = new RectOffset(Inset, Inset, 0, 0),
 				FlexSize = Vector2.right,
 				DynamicSize = true,
 			};
+			modeRow.AddChild(new PLabel("ModeLabel")
+			{
+				Text = ModStrings.ModeLabel,
+				TextStyle = PUITuning.Fonts.TextDarkStyle,
+				TextAlignment = TextAnchor.MiddleLeft,
+			});
 			modeRow.AddChild(new PButton("Combined")
 			{
 				Text = ModStrings.ModeCombined,
@@ -306,6 +242,7 @@ namespace AdvancedCritterSensor
 				TextStyle = PUITuning.Fonts.TextDarkStyle,
 				TextAlignment = TextAnchor.MiddleLeft,
 				CheckSize = CheckSize,
+				Margin = new RectOffset(Inset, Inset, 0, 0),
 				FlexSize = Vector2.right,
 				OnChecked = (_, __) => ToggleCounting(list),
 			}.AddOnRealize(go => list.toggle = go));
@@ -347,7 +284,7 @@ namespace AdvancedCritterSensor
 			{
 				Direction = PanelDirection.Vertical,
 				Alignment = TextAnchor.UpperLeft,
-				Margin = new RectOffset(Indent, 4, 0, 0),
+				Margin = new RectOffset(0, 0, 0, 0),
 				FlexSize = Vector2.right,
 				DynamicSize = true,
 			}.AddOnRealize(go => list.panel = go);
@@ -427,6 +364,17 @@ namespace AdvancedCritterSensor
 			GameObject clone = Util.KInstantiateUI(prefab.gameObject, block.host, force_active: false);
 			clone.name = "ThresholdEditor_" + kind;
 			block.screen = clone.GetComponent<ThresholdSwitchSideScreen>();
+
+			// The prefab sizes itself to a fixed 280px width. Let it stretch to whatever the
+			// host offers instead (the vanilla details body does the same to its instance).
+			ContentSizeFitter fitter = clone.GetComponent<ContentSizeFitter>();
+			if (fitter != null)
+				fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+			LayoutElement stretch = clone.AddOrGet<LayoutElement>();
+			stretch.layoutPriority = 2;
+			stretch.minWidth = 0f;
+			stretch.preferredWidth = 0f;
+			stretch.flexibleWidth = 1f;
 
 			// The vanilla editor shows "Current Count:\n<n>" above its controls; this screen
 			// has its own one-line header instead. Keep the label's GameObject active (other
