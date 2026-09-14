@@ -95,7 +95,7 @@ namespace AdvancedCritterSensor
 
 		public float RangeMax => AdvancedCritterSensor.MaxThreshold;
 
-		public LocString Title => ModStrings.SideScreenTitle;
+		public LocString Title => ModStrings.TitleLoc;
 
 		public LocString ThresholdValueName
 		{
@@ -146,7 +146,7 @@ namespace AdvancedCritterSensor
 
 		public float GetRangeMaxInputField() => RangeMax;
 
-		public LocString ThresholdValueUnits() => "";
+		public LocString ThresholdValueUnits() => ModStrings.NoUnits;
 
 		public string Format(float value, bool units) => Mathf.RoundToInt(value).ToString();
 

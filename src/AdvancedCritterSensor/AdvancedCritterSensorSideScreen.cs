@@ -42,7 +42,7 @@ namespace AdvancedCritterSensor
 		private static readonly FieldInfo ElementNameField = AccessTools.Field(typeof(TreeFilterableSideScreenElement), "elementName");
 		private static readonly FieldInfo ElementCheckField = AccessTools.Field(typeof(TreeFilterableSideScreenElement), "checkBox");
 		private static readonly FieldInfo ElementImageField = AccessTools.Field(typeof(TreeFilterableSideScreenElement), "elementImg");
-		private static readonly FieldInfo TabHeaderContainerField = AccessTools.Field(typeof(DetailsScreen), "tabHeaderContainer");
+		private static readonly FieldInfo SideScreenRootField = AccessTools.Field(typeof(DetailsScreen), "sideScreen");
 		private static bool hierarchyDumped;
 
 		private const int Indent = 24;
@@ -140,18 +140,12 @@ namespace AdvancedCritterSensor
 			try
 			{
 				StringBuilder sb = new StringBuilder();
-				GameObject tabHeader = TabHeaderContainerField != null && DetailsScreen.Instance != null ? TabHeaderContainerField.GetValue(DetailsScreen.Instance) as GameObject : null;
-				sb.AppendLine("[AdvancedCritterSensor] ---- tab header container ----");
-				if (tabHeader != null)
-					DumpHierarchy(tabHeader.transform, 0, 3, sb);
+				GameObject sideRoot = SideScreenRootField != null && DetailsScreen.Instance != null ? SideScreenRootField.GetValue(DetailsScreen.Instance) as GameObject : null;
+				sb.AppendLine("[AdvancedCritterSensor] ---- side screen root (Options row lives here) ----");
+				if (sideRoot != null)
+					DumpHierarchy(sideRoot.transform, 0, 3, sb);
 				else
-					sb.AppendLine("(tabHeaderContainer not found)");
-				sb.AppendLine("[AdvancedCritterSensor] ---- side screen parent chain ----");
-				for (Transform t = transform; t != null && sb.Length < 60000; t = t.parent)
-					sb.AppendLine(Describe(t));
-				sb.AppendLine("[AdvancedCritterSensor] ---- threshold editor clone ----");
-				if (combined != null && combined.screen != null)
-					DumpHierarchy(combined.screen.transform, 0, 8, sb);
+					sb.AppendLine("(sideScreen not found)");
 				Debug.Log(sb.ToString());
 			}
 			catch (Exception ex)
@@ -436,6 +430,26 @@ namespace AdvancedCritterSensor
 			{
 				currentValue.enabled = false;
 				currentValue.gameObject.AddOrGet<LayoutElement>().ignoreLayout = true;
+				// The prefab reserves room for the two-line count: its container has a fixed
+				// minimum height and the content block a fixed preferred height. Release both
+				// so the remaining line sits directly above the toggles.
+				Transform container = currentValue.transform.parent;
+				if (container != null && container != clone.transform)
+				{
+					LayoutElement containerLayout = container.GetComponent<LayoutElement>();
+					if (containerLayout != null)
+					{
+						containerLayout.minHeight = -1f;
+						containerLayout.preferredHeight = -1f;
+					}
+					Transform content = container.parent;
+					if (content != null && content != clone.transform)
+					{
+						LayoutElement contentLayout = content.GetComponent<LayoutElement>();
+						if (contentLayout != null)
+							contentLayout.preferredHeight = -1f;
+					}
+				}
 			}
 		}
 

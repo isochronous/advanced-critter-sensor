@@ -51,9 +51,19 @@ namespace AdvancedCritterSensor
 		public const string CountCrittersTooltip = "Include critters in the count. The list below chooses which species; only discovered species are shown.";
 		public const string CountEggsTooltip = "Include eggs in the count. The list below chooses which egg types; only discovered eggs are shown.";
 
-		public const string ValueNameCount = "Count";
-		public const string ValueNameCritters = "Critters";
-		public const string ValueNameEggs = "Eggs";
+		// Keyed LocStrings: the vanilla threshold screen renders these via LocString.ToString(),
+		// which looks the key up, so unkeyed instances would print "MISSING.".
+		private const string SideScreenKey = "STRINGS.UI.UISIDESCREENS.ADVANCED_CRITTER_SENSOR_SIDE_SCREEN.";
+		public static readonly LocString TitleLoc = Keyed("TITLE", SideScreenTitle);
+		public static readonly LocString ValueNameCount = Keyed("VALUE_NAME_COUNT", "Count");
+		public static readonly LocString ValueNameCritters = Keyed("VALUE_NAME_CRITTERS", "Critters");
+		public static readonly LocString ValueNameEggs = Keyed("VALUE_NAME_EGGS", "Eggs");
+		public static readonly LocString NoUnits = Keyed("NO_UNITS", "");
+
+		private static LocString Keyed(string suffix, string text)
+		{
+			return new LocString(text, SideScreenKey + suffix);
+		}
 
 		private static readonly string KwCritters = UI.PRE_KEYWORD + "Critters" + UI.PST_KEYWORD;
 		private static readonly string KwEggs = UI.PRE_KEYWORD + "Eggs" + UI.PST_KEYWORD;
@@ -71,6 +81,8 @@ namespace AdvancedCritterSensor
 			Strings.Add(PrefabKey + "DESC", Desc);
 			Strings.Add(PrefabKey + "EFFECT", Effect);
 			Strings.Add(SideScreenTitleKey, SideScreenTitle);
+			foreach (LocString loc in new[] { TitleLoc, ValueNameCount, ValueNameCritters, ValueNameEggs, NoUnits })
+				Strings.Add(loc.key.String, loc.text);
 		}
 	}
 }
