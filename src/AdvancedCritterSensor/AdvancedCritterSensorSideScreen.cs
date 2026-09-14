@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Text;
 using HarmonyLib;
 using PeterHan.PLib.UI;
 using UnityEngine;
@@ -41,6 +42,8 @@ namespace AdvancedCritterSensor
 		private static readonly FieldInfo ElementNameField = AccessTools.Field(typeof(TreeFilterableSideScreenElement), "elementName");
 		private static readonly FieldInfo ElementCheckField = AccessTools.Field(typeof(TreeFilterableSideScreenElement), "checkBox");
 		private static readonly FieldInfo ElementImageField = AccessTools.Field(typeof(TreeFilterableSideScreenElement), "elementImg");
+		private static readonly FieldInfo TabHeaderContainerField = AccessTools.Field(typeof(DetailsScreen), "tabHeaderContainer");
+		private static bool hierarchyDumped;
 
 		private const int Indent = 24;
 		private const float MaxListHeight = 220f;
@@ -124,6 +127,82 @@ namespace AdvancedCritterSensor
 			RebuildList(critters);
 			RebuildList(eggs);
 			RefreshAll();
+			DumpDiagnostics();
+		}
+
+		// ---- temporary layout diagnostics (logged once per game session) ----
+
+		private void DumpDiagnostics()
+		{
+			if (hierarchyDumped)
+				return;
+			hierarchyDumped = true;
+			try
+			{
+				StringBuilder sb = new StringBuilder();
+				GameObject tabHeader = TabHeaderContainerField != null && DetailsScreen.Instance != null ? TabHeaderContainerField.GetValue(DetailsScreen.Instance) as GameObject : null;
+				sb.AppendLine("[AdvancedCritterSensor] ---- tab header container ----");
+				if (tabHeader != null)
+					DumpHierarchy(tabHeader.transform, 0, 3, sb);
+				else
+					sb.AppendLine("(tabHeaderContainer not found)");
+				sb.AppendLine("[AdvancedCritterSensor] ---- side screen parent chain ----");
+				for (Transform t = transform; t != null && sb.Length < 60000; t = t.parent)
+					sb.AppendLine(Describe(t));
+				sb.AppendLine("[AdvancedCritterSensor] ---- threshold editor clone ----");
+				if (combined != null && combined.screen != null)
+					DumpHierarchy(combined.screen.transform, 0, 8, sb);
+				Debug.Log(sb.ToString());
+			}
+			catch (Exception ex)
+			{
+				Debug.LogWarning("[AdvancedCritterSensor] diagnostics failed: " + ex);
+			}
+		}
+
+		private static void DumpHierarchy(Transform t, int depth, int maxDepth, StringBuilder sb)
+		{
+			sb.Append(' ', depth * 2).AppendLine(Describe(t));
+			if (depth >= maxDepth)
+				return;
+			for (int i = 0; i < t.childCount; i++)
+				DumpHierarchy(t.GetChild(i), depth + 1, maxDepth, sb);
+		}
+
+		private static string Describe(Transform t)
+		{
+			StringBuilder sb = new StringBuilder();
+			sb.Append(t.name).Append(t.gameObject.activeSelf ? "" : " [inactive]");
+			RectTransform rt = t as RectTransform;
+			if (rt != null)
+				sb.Append(" rect=").Append(rt.rect.width.ToString("0")).Append('x').Append(rt.rect.height.ToString("0"))
+					.Append(" anchor=").Append(rt.anchorMin).Append(rt.anchorMax).Append(" pos=").Append(rt.anchoredPosition);
+			LayoutElement le = t.GetComponent<LayoutElement>();
+			if (le != null)
+				sb.Append(" LE(min=").Append(le.minHeight).Append(" pref=").Append(le.preferredHeight).Append(" flex=").Append(le.flexibleHeight).Append(le.ignoreLayout ? " ignore" : "").Append(')');
+			foreach (Component c in t.GetComponents<Component>())
+			{
+				if (c is LayoutGroup lg)
+					sb.Append(' ').Append(c.GetType().Name).Append("(pad ").Append(lg.padding.top).Append('/').Append(lg.padding.bottom).Append(')');
+				else if (c is ContentSizeFitter csf)
+					sb.Append(" Fitter(").Append(csf.verticalFit).Append(')');
+				else if (c is LocText lt)
+					sb.Append(" LocText").Append(lt.enabled ? "" : "[disabled]").Append("='").Append(Truncate(lt.text, 30)).Append("'");
+				else if (c is Image img && !(c is LocText))
+					sb.Append(' ').Append(c.GetType().Name).Append("(sprite=").Append(img.sprite != null ? img.sprite.name : "null").Append(img.enabled ? "" : ",disabled").Append(')');
+				else if (c is KScreen || c is MultiToggle || c is KButton || c is KSlider)
+					sb.Append(' ').Append(c.GetType().Name);
+			}
+			return sb.ToString();
+		}
+
+		private static string Truncate(string s, int max)
+		{
+			if (string.IsNullOrEmpty(s))
+				return "";
+			s = s.Replace("
+", " ");
+			return s.Length <= max ? s : s.Substring(0, max) + "...";
 		}
 
 		public override void ClearTarget()
